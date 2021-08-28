@@ -1,0 +1,122 @@
+name: openwrt-pi3b-openclash-latest
+
+on:
+  workflow_dispatch:
+
+env:
+  CONFIG_FILE: config/openwrt-pi3b-openclash.config
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Build system setup
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt update
+          sudo apt install build-essential ccache ecj fastjar file g++ gawk gettext git java-propose-classpath libelf-dev libncurses5-dev libncursesw5-dev libssl-dev python python2.7-dev python3 unzip wget python3-distutils python3-setuptools rsync subversion swig time xsltproc zlib1g-dev
+          sudo mkdir -p /app
+          sudo chown $USER:$GROUPS /app
+
+      - name: Clone source code
+        working-directory: /app
+        run: |
+          wget https://github.com/vernesong/OpenClash/archive/master.tar.gz -O openclash.tar.gz
+          wget https://github.com/openwrt/openwrt/archive/master.tar.gz -O openwrt.tar.gz
+          mkdir openwrt
+          mkdir openclash
+          tar zxvf openclash.tar.gz -C openclash --strip-components=1
+          tar zxvf openwrt.tar.gz  -C openwrt --strip-components=1
+          cp -r openclash/luci-app-openclash openwrt/package
+          
+      - name: Enable wifi
+        working-directory: /app/openwrt
+        run: |
+          sed -i 's/disabled=1/disabled=0/g' package/kernel/mac80211/files/lib/wifi/mac80211.sh
+      
+      - name: Update feeds
+        working-directory: /app/openwrt
+        run: ./scripts/feeds update -a
+
+      - name: Install feeds
+        working-directory: /app/openwrt
+        run: ./scripts/feeds install -a
+        
+      - name: Load custom configuration
+        run: |
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE /app/openwrt/.config
+
+      - name: Download package
+        working-directory: /app
+        id: package
+        run: |
+          cd openwrt
+          make defconfig
+          make download -j8
+
+      - name: Compile the firmware
+        id: compile
+        run: |
+          cd /app/openwrt
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 || make -j1 V=s
+          echo "::set-output name=status::success"
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      - name: Organize files
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        run: |
+          cd /app/openwrt/bin/targets/*/*
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "::set-output name=status::success"
+
+      - name: Upload firmware directory
+        uses: actions/upload-artifact@main
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        with:
+          name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE }}
+
+      - name: Generate release tag
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          echo "::set-output name=release_tag::$(date +"%Y.%m.%d-%H%M")"
+          touch release.txt
+          echo "::set-output name=status::success"
+
+      - name: Upload firmware to release
+        uses: softprops/action-gh-release@v1
+        if: steps.tag.outputs.status == 'success' && !cancelled()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          body_path: release.txt
+          files: ${{ env.FIRMWARE }}/*
+
+      - name: Delete workflow runs
+        uses: GitRML/delete-workflow-runs@main
+        with:
+          retain_days: 1
+          keep_minimum_runs: 3
+
+      - name: Remove old Releases
+        uses: dev-drprasad/delete-older-releases@v0.1.0
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        with:
+          keep_latest: 3
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
