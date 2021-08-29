@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 env:
+  NAME: openwrt-pi3b-passwall-stable
   CONFIG_FILE: config/openwrt-pi3b-passwall.config
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -107,7 +108,7 @@ jobs:
         id: tag
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
         run: |
-          echo "::set-output name=release_tag::$(date +"%Y.%m.%d-%H%M")"
+          echo "::set-output name=release_tag::${{ env.NAME }}-$(date +"%Y.%m.%d-%H%M")"
           touch release.txt
           echo "::set-output name=status::success"
 

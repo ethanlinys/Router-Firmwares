@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 env:
+  NAME: rt-n56u-k2
   DEVICE: PSG1218
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -63,7 +64,7 @@ jobs:
         id: tag
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
         run: |
-          echo "::set-output name=release_tag::$(date +"%Y.%m.%d-%H%M")"
+          echo "::set-output name=release_tag::${{ env.NAME }}-$(date +"%Y.%m.%d-%H%M")"
           touch release.txt
           echo "::set-output name=status::success"
 
